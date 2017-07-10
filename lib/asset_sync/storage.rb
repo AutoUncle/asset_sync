@@ -1,5 +1,7 @@
 require "fog/core"
 
+require "asset_sync/multi_mime"
+
 module AssetSync
   class Storage
     REGEXP_FINGERPRINTED_FILES = /^(.*)\/([^-]+)-[^\.]+\.([^\.]+)$/
@@ -40,7 +42,8 @@ module AssetSync
     end
 
     def local_files
-      @local_files ||= get_local_files.uniq
+      @local_files ||=
+        (get_local_files + config.additional_local_file_paths).uniq
     end
 
     def always_upload_files
@@ -130,9 +133,11 @@ module AssetSync
       one_year = 31557600
       ext = File.extname(f)[1..-1]
       mime = MultiMime.lookup(ext)
+      gzip_file_handle = nil
+      file_handle = File.open("#{path}/#{f}")
       file = {
         :key => f,
-        :body => File.open("#{path}/#{f}"),
+        :body => file_handle,
         :public => true,
         :content_type => mime
       }
@@ -177,9 +182,10 @@ module AssetSync
 
         if gzipped_size < original_size
           percentage = ((gzipped_size.to_f/original_size.to_f)*100).round(2)
+          gzip_file_handle = File.open(gzipped)
           file.merge!({
                         :key => f,
-                        :body => File.open(gzipped),
+                        :body => gzip_file_handle,
                         :content_encoding => 'gzip'
                       })
           log "Uploading: #{gzipped} in place of #{f} saving #{percentage}%"
@@ -208,7 +214,9 @@ module AssetSync
         })
       end
 
-      file = bucket.files.create( file ) unless ignore
+      bucket.files.create( file ) unless ignore
+      file_handle.close
+      gzip_file_handle.close if gzip_file_handle
     end
 
     def upload_files
